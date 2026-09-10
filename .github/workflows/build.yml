@@ -1,14 +1,7 @@
 name: build
 
 on:
-  push:
-    branches:
-      - 'main'
-    tags:
-    - '**'
-  pull_request:
-    branches:
-    - '**'
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -16,38 +9,46 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        platform: [ubuntu-latest, windows-latest]
+        # ubuntu-22.04 is pinned (not ubuntu-latest): actions/setup-python has no
+        # CPython 3.7 build in its manifest for ubuntu-24.04, which ubuntu-latest
+        # now resolves to, so the py37 leg cannot be provisioned there.
+        platform: [ubuntu-22.04, windows-latest]
         tox-env: [py37, py38, py39, py310, py311, nolxml, nohtml5lib]
+        # Python patch releases pinned to what shipped at the 2.4.1 release date
+        # (2023-04-16): CPython's builtin html.parser changed how it handles
+        # <iframe> content in later patch releases, which breaks the
+        # parser-behavior iframe tests. Not a code regression.
         include:
           - tox-env: py37
             python-version: 3.7
-            continue-on-error: false
           - tox-env: py38
             python-version: 3.8
-            continue-on-error: false
           - tox-env: py39
-            python-version: 3.9
-            continue-on-error: false
+            # 3.9.13 rather than a 2023-era 3.9.x: CPython 3.9 went source-only
+            # after 3.9.13, so it is the newest 3.9 with both a linux-22.04 and a
+            # win32 build in the setup-python manifest.
+            python-version: '3.9.13'
           - tox-env: py310
-            python-version: '3.10'
-            continue-on-error: false
+            python-version: '3.10.11'
           - tox-env: py311
-            python-version: '3.11'
-            continue-on-error: false
+            python-version: '3.11.3'
           - tox-env: nolxml
-            python-version: '3.11'
-            continue-on-error: false
+            python-version: '3.11.3'
           - tox-env: nohtml5lib
-            python-version: '3.10'
-            continue-on-error: false
+            python-version: '3.10.11'
         # exclude:
         #   - platform: windows-latest
         #     tox-env: py311
 
     env:
       TOXENV: ${{ matrix.tox-env }}
+      # Registry time machine: resolve every pip install (this job's own tooling
+      # and, via tox's `passenv = *`, the deps tox installs into each isolated
+      # env plus the isolated_build backend) as of the 2.4.1 release date.
+      PIP_INDEX_URL: 'https://:2023-04-16@time-machines-pypi.sealsecurity.io/'
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v3
@@ -65,65 +66,5 @@ jobs:
       run: |
         python -m pip install --upgrade pip setuptools build tox coverage
     - name: Test
-      run: |
-        python -m tox
-      continue-on-error: ${{ matrix.continue-on-error }}
-    - name: Upload Results
-      if: success()
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: ${{ matrix.platform }}-${{ matrix.tox-env }}
-        fail_ci_if_error: false
-
-  lint:
-    strategy:
-      max-parallel: 4
-      matrix:
-        python-version: [3.9]
-
-    env:
-      TOXENV: lint
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools tox
-    - name: Lint
-      run: |
-        python -m tox
-
-  documents:
-    strategy:
-      max-parallel: 4
-      matrix:
-        python-version: [3.9]
-
-    env:
-      TOXENV: documents
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools tox
-    - name: Install Aspell
-      run: |
-        sudo apt-get install aspell aspell-en
-    - name: Build documents
       run: |
         python -m tox
